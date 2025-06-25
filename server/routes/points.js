@@ -1,237 +1,179 @@
-const express = require('express');
-      const router = express.Router();
-      const { query } = require('../db');
-      const excel = require('exceljs');
+import express from 'express';
+import { executeQuery } from '../config/db.js';
+import { validatePoint } from '../utils/validators.js';
 
-      // 添加统计聚合接口
-      router.get('/statistics/summary', async (req, res) => {
-        try {
-          const { layerId, regionId, startDate, endDate } = req.query;
+const router = express.Router();
 
-          let sql = `
-            SELECT 
-              COUNT(*) as total,
-              AVG(value) as average,
-              MAX(value) as maximum,
-              MIN(value) as minimum,
-              SUM(value) as sum
-            FROM points
-            WHERE 1=1
-          `;
+// 获取所有点数据
+router.get('/', async (req, res) => {
+  try {
+    const { layer_id, time_range, limit = 1000 } = req.query;
+    
+    let query = 'SELECT * FROM points WHERE 1=1';
+    const params = [];
 
-          const params = [];
+    if (layer_id) {
+      query += ' AND layer_id = ?';
+      params.push(layer_id);
+    }
 
-          if (layerId) {
-            sql += ' AND layer_id = ?';
-            params.push(layerId);
-          }
+    if (time_range) {
+      query += ' AND timestamp >= DATE_SUB(NOW(), INTERVAL ? HOUR)';
+      params.push(parseInt(time_range));
+    }
 
-          if (regionId) {
-            sql += ' AND region_id = ?';
-            params.push(regionId);
-          }
+    query += ' ORDER BY timestamp DESC LIMIT ?';
+    params.push(parseInt(limit));
 
-          if (startDate && endDate) {
-            sql += ' AND timestamp BETWEEN ? AND ?';
-            params.push(startDate, endDate);
-          }
+    const points = await executeQuery(query, params);
+    res.json(points);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
-          const [stats] = await query(sql, params);
-          res.json(stats);
-        } catch (error) {
-          console.error('获取统计数据失败:', error);
-          res.status(500).json({ error: '获取统计数据失败' });
-        }
-      });
+// 获取热力图数据
+router.get('/heatmap', async (req, res) => {
+  try {
+    const { hours = 24 } = req.query;
+    const query = `
+      SELECT latitude, longitude, value 
+      FROM points 
+      WHERE timestamp > DATE_SUB(NOW(), INTERVAL ? HOUR)
+      AND layer_id = (SELECT id FROM layers WHERE type = 'heatmap' LIMIT 1)
+    `;
+    
+    const heatmapData = await executeQuery(query, [hours]);
+    res.json(heatmapData);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
-      // 添加按区域分组统计接口
-      router.get('/statistics/by-region', async (req, res) => {
-        try {
-          const { layerId, startDate, endDate } = req.query;
+// 添加新点
+router.post('/', async (req, res) => {
+  try {
+    const pointData = req.body;
+    const validation = validatePoint(pointData);
+    
+    if (!validation.valid) {
+      return res.status(400).json({ error: validation.errors });
+    }
 
-          let sql = `
-            SELECT 
-              r.name as region_name,
-              COUNT(*) as point_count,
-              AVG(p.value) as average_value,
-              MAX(p.value) as max_value,
-              MIN(p.value) as min_value
-            FROM points p
-            JOIN regions r ON p.region_id = r.id
-            WHERE 1=1
-          `;
+    const query = `
+      INSERT INTO points 
+      (latitude, longitude, value, name, description, layer_id, properties) 
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `;
+    
+    const params = [
+      pointData.latitude,
+      pointData.longitude,
+      pointData.value,
+      pointData.name,
+      pointData.description,
+      pointData.layer_id,
+      JSON.stringify(pointData.properties || {})
+    ];
 
-          const params = [];
+    const result = await executeQuery(query, params);
+    res.status(201).json({ 
+      id: result.insertId,
+      message: 'Point created successfully' 
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
-          if (layerId) {
-            sql += ' AND p.layer_id = ?';
-            params.push(layerId);
-          }
+// 更新点数据
+router.put('/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updateData = req.body;
+    const validation = validatePoint(updateData);
+    
+    if (!validation.valid) {
+      return res.status(400).json({ error: validation.errors });
+    }
 
-          if (startDate && endDate) {
-            sql += ' AND p.timestamp BETWEEN ? AND ?';
-            params.push(startDate, endDate);
-          }
+    const query = `
+      UPDATE points 
+      SET latitude = ?, longitude = ?, value = ?, 
+          name = ?, description = ?, properties = ?
+      WHERE id = ?
+    `;
+    
+    const params = [
+      updateData.latitude,
+      updateData.longitude,
+      updateData.value,
+      updateData.name,
+      updateData.description,
+      JSON.stringify(updateData.properties || {}),
+      id
+    ];
 
-          sql += ' GROUP BY r.id, r.name';
+    const result = await executeQuery(query, params);
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Point not found' });
+    }
+    
+    res.json({ message: 'Point updated successfully' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
-          const stats = await query(sql, params);
-          res.json(stats);
-        } catch (error) {
-          console.error('获取区域统计失败:', error);
-          res.status(500).json({ error: '获取区域统计失败' });
-        }
-      });
+// 删除点
+router.delete('/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await executeQuery('DELETE FROM points WHERE id = ?', [id]);
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Point not found' });
+    }
+    
+    res.json({ message: 'Point deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
-      // 添加时间维度分析接口
-      router.get('/analysis/time-series', async (req, res) => {
-        try {
-          const {
-            layerId,
-            regionId,
-            startDate,
-            endDate,
-            interval = 'day' // 支持 day/week/month
-          } = req.query;
+// 批量添加点
+router.post('/batch', async (req, res) => {
+  try {
+    const { points } = req.body;
+    
+    if (!Array.isArray(points) || points.length === 0) {
+      return res.status(400).json({ error: 'Invalid points data' });
+    }
 
-          let timeFormat;
-          switch (interval) {
-            case 'week':
-              timeFormat = 'YEARWEEK(timestamp)';
-              break;
-            case 'month':
-              timeFormat = 'DATE_FORMAT(timestamp, "%Y-%m")';
-              break;
-            default:
-              timeFormat = 'DATE(timestamp)';
-          }
+    const query = `
+      INSERT INTO points 
+      (latitude, longitude, value, name, description, layer_id, properties) 
+      VALUES ?
+    `;
+    
+    const values = points.map(point => [
+      point.latitude,
+      point.longitude,
+      point.value,
+      point.name,
+      point.description,
+      point.layer_id,
+      JSON.stringify(point.properties || {})
+    ]);
 
-          let sql = `
-            SELECT 
-              ${timeFormat} as time_period,
-              COUNT(*) as count,
-              AVG(value) as average,
-              MAX(value) as maximum,
-              MIN(value) as minimum
-            FROM points
-            WHERE 1=1
-          `;
+    const result = await executeQuery(query, [values]);
+    res.status(201).json({ 
+      message: `${result.affectedRows} points created successfully` 
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
-          const params = [];
-
-          if (layerId) {
-            sql += ' AND layer_id = ?';
-            params.push(layerId);
-          }
-
-          if (regionId) {
-            sql += ' AND region_id = ?';
-            params.push(regionId);
-          }
-
-          if (startDate && endDate) {
-            sql += ' AND timestamp BETWEEN ? AND ?';
-            params.push(startDate, endDate);
-          }
-
-          sql += ` GROUP BY ${timeFormat} ORDER BY time_period`;
-
-          const data = await query(sql, params);
-          res.json(data);
-        } catch (error) {
-          console.error('获取时间序列数据失败:', error);
-          res.status(500).json({ error: '获取时间序列数据失败' });
-        }
-      });
-
-      // 添加数据导出接口
-      router.get('/export', async (req, res) => {
-        try {
-          const { format = 'excel', ...filters } = req.query;
-
-          // 获取数据
-          const points = await query(
-            `SELECT p.*, l.name as layer_name, r.name as region_name
-             FROM points p
-             LEFT JOIN layers l ON p.layer_id = l.id
-             LEFT JOIN regions r ON p.region_id = r.id
-             WHERE 1=1`,
-            []
-          );
-
-          if (format === 'excel') {
-            const workbook = new excel.Workbook();
-            const worksheet = workbook.addWorksheet('Points Data');
-
-            worksheet.columns = [
-              { header: 'ID', key: 'id' },
-              { header: '图层', key: 'layer_name' },
-              { header: '区域', key: 'region_name' },
-              { header: '纬度', key: 'lat' },
-              { header: '经度', key: 'lng' },
-              { header: '数值', key: 'value' },
-              { header: '时间', key: 'timestamp' }
-            ];
-
-            worksheet.addRows(points);
-
-            res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-            res.setHeader('Content-Disposition', 'attachment; filename=points-data.xlsx');
-
-            await workbook.xlsx.write(res);
-            res.end();
-          } else if (format === 'csv') {
-            res.setHeader('Content-Type', 'text/csv');
-            res.setHeader('Content-Disposition', 'attachment; filename=points-data.csv');
-
-            const csv = points.map(point =>
-              `${point.id},${point.layer_name},${point.region_name},${point.lat},${point.lng},${point.value},${point.timestamp}`
-            ).join('\n');
-
-            res.send(csv);
-          }
-        } catch (error) {
-          console.error('导出数据失败:', error);
-          res.status(500).json({ error: '导出数据失败' });
-        }
-      });
-
-      // 修改热力图接口，增加区域过滤
-      router.get('/heatmap/data', async (req, res) => {
-        try {
-          const {
-            layerId,
-            regionId,
-            startDate,
-            endDate,
-            limit = 50000,
-            useCache = 'true'
-          } = req.query;
-
-          // ... 原有的缓存逻辑 ...
-
-          let sql = `
-            SELECT p.lat, p.lng, p.value
-            FROM points p
-            WHERE 1=1
-          `;
-
-          if (regionId) {
-            sql += `
-              AND ST_Contains(
-                (SELECT boundary FROM regions WHERE id = ?),
-                POINT(p.lng, p.lat)
-              )
-            `;
-            params.push(regionId);
-          }
-
-          // ... 其余原有逻辑 ...
-
-        } catch (error) {
-          console.error('获取热力图数据失败:', error);
-          res.status(500).json({ error: '获取热力图数据失败' });
-        }
-      });
-
-      module.exports = router;
+export default router;

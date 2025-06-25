@@ -1,0 +1,141 @@
+// 文本溢出省略
+@mixin text-ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+// 多行文本溢出省略
+@mixin text-ellipsis-multiple($lines: 2) {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: $lines;
+  overflow: hidden;
+}
+
+// flex 布局
+@mixin flex-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+@mixin flex-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+// 响应式
+@mixin respond-to($breakpoint) {
+  @if $breakpoint == xs {
+    @media (max-width: $breakpoint-xs) { @content; }
+  }
+  @else if $breakpoint == sm {
+    @media (min-width: $breakpoint-xs) { @content; }
+  }
+  @else if $breakpoint == md {
+    @media (min-width: $breakpoint-sm) { @content; }
+  }
+  @else if $breakpoint == lg {
+    @media (min-width: $breakpoint-md) { @content; }
+  }
+  @else if $breakpoint == xl {
+    @media (min-width: $breakpoint-lg) { @content; }
+  }
+}
+
+// 滚动条样式
+@mixin scrollbar {
+  &::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  
+  &::-webkit-scrollbar-track {
+    background: $background-color-light;
+    border-radius: 3px;
+  }
+  
+  &::-webkit-scrollbar-thumb {
+    background: $text-secondary;
+    border-radius: 3px;
+    
+    &:hover {
+      background: $text-regular;
+    }
+  }
+}
+
+// 清除浮动
+@mixin clearfix {
+  &::after {
+    content: '';
+    display: table;
+    clear: both;
+  }
+}
+
+// 阴影效果
+@mixin box-shadow($level: 'base') {
+  @if $level == 'light' {
+    box-shadow: $box-shadow-light;
+  }
+  @else if $level == 'dark' {
+    box-shadow: $box-shadow-dark;
+  }
+  @else {
+    box-shadow: $box-shadow-base;
+  }
+}
+
+// 过渡效果
+@mixin transition($properties: all) {
+  transition: $properties $transition-duration $transition-timing-function;
+}
+
+// 卡片样式
+@mixin card {
+  background: #fff;
+  border-radius: $border-radius-base;
+  padding: $spacing-large;
+  @include box-shadow('light');
+}
+
+// 按钮基础样式
+@mixin button-base {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 16px;
+  font-size: $font-size-base;
+  border-radius: $border-radius-base;
+  cursor: pointer;
+  @include transition(all);
+  
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.7;
+  }
+}
+
+// 输入框基础样式
+@mixin input-base {
+  width: 100%;
+  padding: 8px 12px;
+  font-size: $font-size-base;
+  border: 1px solid $border-color-base;
+  border-radius: $border-radius-base;
+  background-color: #fff;
+  @include transition(border-color);
+  
+  &:focus {
+    outline: none;
+    border-color: $primary-color;
+  }
+  
+  &:disabled {
+    background-color: $background-color-light;
+    cursor: not-allowed;
+  }
+}

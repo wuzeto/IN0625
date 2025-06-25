@@ -1,159 +1,95 @@
-const express = require('express');
+import express from 'express';
+import { executeQuery } from '../config/db.js';
+import { validateRegion } from '../utils/validators.js';
+
 const router = express.Router();
-const { query } = require('../db');
 
 // 获取所有区域
 router.get('/', async (req, res) => {
   try {
-    const regions = await query('SELECT * FROM regions ORDER BY name');
+    const { layer_id } = req.query;
+    
+    let query = 'SELECT * FROM regions WHERE 1=1';
+    const params = [];
+
+    if (layer_id) {
+      query += ' AND layer_id = ?';
+      params.push(layer_id);
+    }
+
+    const regions = await executeQuery(query, params);
     res.json(regions);
   } catch (error) {
-    console.error('获取区域失败:', error);
-    res.status(500).json({ error: '获取区域失败' });
+    res.status(500).json({ error: error.message });
   }
 });
 
-// 获取单个区域
-router.get('/:id', async (req, res) => {
+// 创建新区域
+router.post('/', async (req, res) => {
   try {
-    const [region] = await query('SELECT * FROM regions WHERE id = ?', [req.params.id]);
+    const regionData = req.body;
+    const validation = validateRegion(regionData);
     
-    if (!region) {
-      return res.status(404).json({ error: '区域不存在' });
+    if (!validation.valid) {
+      return res.status(400).json({ error: validation.errors });
     }
-    
-    res.json(region);
-  } catch (error) {
-    console.error('获取区域失败:', error);
-    res.status(500).json({ error: '获取区域失败' });
-  }
-});
 
-// 获取区域边界数据
-router.get('/:id/boundary', async (req, res) => {
-  try {
-    const [region] = await query(
-      'SELECT id, name, boundary FROM regions WHERE id = ?', 
-      [req.params.id]
-    );
-    
-    if (!region) {
-      return res.status(404).json({ error: '区域不存在' });
-    }
-    
-    // 解析GeoJSON边界数据
-    let boundary;
-    try {
-      boundary = region.boundary ? JSON.parse(region.boundary) : null;
-    } catch (e) {
-      console.error('解析边界数据失败:', e);
-      boundary = null;
-    }
-    
-    res.json({
-      id: region.id,
-      name: region.name,
-      boundary
-    });
-  } catch (error) {
-    console.error('获取区域边界失败:', error);
-    res.status(500).json({ error: '获取区域边界失败' });
-  }
-});
-
-// 获取区域统计数据
-router.get('/:id/statistics', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { startDate, endDate, layerId } = req.query;
-    
-    let sql = `
-      SELECT COUNT(*) as pointCount, 
-             AVG(value) as avgValue, 
-             MAX(value) as maxValue, 
-             MIN(value) as minValue
-      FROM points 
-      WHERE region_id = ?
+    const query = `
+      INSERT INTO regions 
+      (name, geometry, properties, layer_id) 
+      VALUES (?, ?, ?, ?)
     `;
     
-    const params = [id];
-    
-    if (startDate && endDate) {
-      sql += ' AND timestamp BETWEEN ? AND ?';
-      params.push(startDate, endDate);
-    }
-    
-    if (layerId) {
-      sql += ' AND layer_id = ?';
-      params.push(layerId);
-    }
-    
-    const [stats] = await query(sql, params);
-    res.json(stats);
-  } catch (error) {
-    console.error('获取区域统计失败:', error);
-    res.status(500).json({ error: '获取区域统计失败' });
-  }
-});
+    const params = [
+      regionData.name,
+      JSON.stringify(regionData.geometry),
+      JSON.stringify(regionData.properties || {}),
+      regionData.layer_id
+    ];
 
-// 创建区域
-router.post('/', async (req, res) => {
-  const { name, description, boundary, center_lat, center_lng } = req.body;
-  
-  if (!name) {
-    return res.status(400).json({ error: '区域名称不能为空' });
-  }
-  
-  try {
-    // 将GeoJSON边界转换为字符串存储
-    const boundaryStr = boundary ? JSON.stringify(boundary) : null;
-    
-    const result = await query(
-      `INSERT INTO regions (name, description, boundary, center_lat, center_lng) 
-       VALUES (?, ?, ?, ?, ?)`,
-      [name, description || '', boundaryStr, center_lat || null, center_lng || null]
-    );
-    
-    const [newRegion] = await query('SELECT * FROM regions WHERE id = ?', [result.insertId]);
-    res.status(201).json(newRegion);
+    const result = await executeQuery(query, params);
+    res.status(201).json({ 
+      id: result.insertId,
+      message: 'Region created successfully' 
+    });
   } catch (error) {
-    console.error('创建区域失败:', error);
-    res.status(500).json({ error: '创建区域失败' });
+    res.status(500).json({ error: error.message });
   }
 });
 
 // 更新区域
 router.put('/:id', async (req, res) => {
-  const { name, description, boundary, center_lat, center_lng } = req.body;
-  const { id } = req.params;
-  
   try {
-    const [region] = await query('SELECT * FROM regions WHERE id = ?', [id]);
+    const { id } = req.params;
+    const updateData = req.body;
+    const validation = validateRegion(updateData);
     
-    if (!region) {
-      return res.status(404).json({ error: '区域不存在' });
+    if (!validation.valid) {
+      return res.status(400).json({ error: validation.errors });
+    }
+
+    const query = `
+      UPDATE regions 
+      SET name = ?, geometry = ?, properties = ?
+      WHERE id = ?
+    `;
+    
+    const params = [
+      updateData.name,
+      JSON.stringify(updateData.geometry),
+      JSON.stringify(updateData.properties || {}),
+      id
+    ];
+
+    const result = await executeQuery(query, params);
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Region not found' });
     }
     
-    // 将GeoJSON边界转换为字符串存储
-    const boundaryStr = boundary ? JSON.stringify(boundary) : region.boundary;
-    
-    await query(
-      `UPDATE regions 
-       SET name = ?, description = ?, boundary = ?, center_lat = ?, center_lng = ? 
-       WHERE id = ?`,
-      [name || region.name, 
-       description !== undefined ? description : region.description, 
-       boundaryStr,
-       center_lat !== undefined ? center_lat : region.center_lat,
-       center_lng !== undefined ? center_lng : region.center_lng,
-       id]
-    );
-    
-    const [updatedRegion] = await query('SELECT * FROM regions WHERE id = ?', [id]);
-    res.json(updatedRegion);
+    res.json({ message: 'Region updated successfully' });
   } catch (error) {
-    console.error('更新区域失败:', error);
-    res.status(500).json({ error: '更新区域失败' });
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -161,18 +97,39 @@ router.put('/:id', async (req, res) => {
 router.delete('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const [region] = await query('SELECT * FROM regions WHERE id = ?', [id]);
+    const result = await executeQuery('DELETE FROM regions WHERE id = ?', [id]);
     
-    if (!region) {
-      return res.status(404).json({ error: '区域不存在' });
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Region not found' });
     }
     
-    await query('DELETE FROM regions WHERE id = ?', [id]);
-    res.json({ message: '区域删除成功' });
+    res.json({ message: 'Region deleted successfully' });
   } catch (error) {
-    console.error('删除区域失败:', error);
-    res.status(500).json({ error: '删除区域失败' });
+    res.status(500).json({ error: error.message });
   }
 });
 
-module.exports = router;
+// 获取区域内的点
+router.get('/:id/points', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // 这里使用 MySQL 的 ST_Contains 函数来判断点是否在区域内
+    const query = `
+      SELECT p.* 
+      FROM points p, regions r 
+      WHERE r.id = ? 
+      AND ST_Contains(
+        ST_GeomFromGeoJSON(r.geometry),
+        ST_Point(p.longitude, p.latitude)
+      )
+    `;
+    
+    const points = await executeQuery(query, [id]);
+    res.json(points);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+export default router;

@@ -1,82 +1,97 @@
-const express = require('express');
+import express from 'express';
+import { executeQuery } from '../config/db.js';
+import { validateLayer } from '../utils/validators.js';
+
 const router = express.Router();
-const { query } = require('../db');
 
 // 获取所有图层
 router.get('/', async (req, res) => {
   try {
-    const layers = await query('SELECT * FROM layers ORDER BY name');
+    const query = `
+      SELECT l.*, 
+        (SELECT COUNT(*) FROM points WHERE layer_id = l.id) as point_count,
+        (SELECT COUNT(*) FROM regions WHERE layer_id = l.id) as region_count
+      FROM layers l
+      ORDER BY l.created_at DESC
+    `;
+    
+    const layers = await executeQuery(query);
     res.json(layers);
   } catch (error) {
-    console.error('获取图层失败:', error);
-    res.status(500).json({ error: '获取图层失败' });
+    res.status(500).json({ error: error.message });
   }
 });
 
-// 获取单个图层
-router.get('/:id', async (req, res) => {
-  try {
-    const [layer] = await query('SELECT * FROM layers WHERE id = ?', [req.params.id]);
-    
-    if (!layer) {
-      return res.status(404).json({ error: '图层不存在' });
-    }
-    
-    res.json(layer);
-  } catch (error) {
-    console.error('获取图层失败:', error);
-    res.status(500).json({ error: '获取图层失败' });
-  }
-});
-
-// 创建图层
+// 创建新图层
 router.post('/', async (req, res) => {
-  const { name, description, color, visible } = req.body;
-  
-  if (!name) {
-    return res.status(400).json({ error: '图层名称不能为空' });
-  }
-  
   try {
-    const result = await query(
-      'INSERT INTO layers (name, description, color, visible) VALUES (?, ?, ?, ?)',
-      [name, description || '', color || '#4facfe', visible !== undefined ? visible : true]
-    );
+    const layerData = req.body;
+    const validation = validateLayer(layerData);
     
-    const [newLayer] = await query('SELECT * FROM layers WHERE id = ?', [result.insertId]);
-    res.status(201).json(newLayer);
+    if (!validation.valid) {
+      return res.status(400).json({ error: validation.errors });
+    }
+
+    const query = `
+      INSERT INTO layers 
+      (name, type, visible, style, properties) 
+      VALUES (?, ?, ?, ?, ?)
+    `;
+    
+    const params = [
+      layerData.name,
+      layerData.type,
+      layerData.visible !== false,
+      JSON.stringify(layerData.style || {}),
+      JSON.stringify(layerData.properties || {})
+    ];
+
+    const result = await executeQuery(query, params);
+    res.status(201).json({ 
+      id: result.insertId,
+      message: 'Layer created successfully' 
+    });
   } catch (error) {
-    console.error('创建图层失败:', error);
-    res.status(500).json({ error: '创建图层失败' });
+    res.status(500).json({ error: error.message });
   }
 });
 
 // 更新图层
 router.put('/:id', async (req, res) => {
-  const { name, description, color, visible } = req.body;
-  const { id } = req.params;
-  
   try {
-    const [layer] = await query('SELECT * FROM layers WHERE id = ?', [id]);
+    const { id } = req.params;
+    const updateData = req.body;
+    const validation = validateLayer(updateData);
     
-    if (!layer) {
-      return res.status(404).json({ error: '图层不存在' });
+    if (!validation.valid) {
+      return res.status(400).json({ error: validation.errors });
+    }
+
+    const query = `
+      UPDATE layers 
+      SET name = ?, type = ?, visible = ?,
+          style = ?, properties = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `;
+    
+    const params = [
+      updateData.name,
+      updateData.type,
+      updateData.visible !== false,
+      JSON.stringify(updateData.style || {}),
+      JSON.stringify(updateData.properties || {}),
+      id
+    ];
+
+    const result = await executeQuery(query, params);
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Layer not found' });
     }
     
-    await query(
-      'UPDATE layers SET name = ?, description = ?, color = ?, visible = ? WHERE id = ?',
-      [name || layer.name, 
-       description !== undefined ? description : layer.description, 
-       color || layer.color, 
-       visible !== undefined ? visible : layer.visible, 
-       id]
-    );
-    
-    const [updatedLayer] = await query('SELECT * FROM layers WHERE id = ?', [id]);
-    res.json(updatedLayer);
+    res.json({ message: 'Layer updated successfully' });
   } catch (error) {
-    console.error('更新图层失败:', error);
-    res.status(500).json({ error: '更新图层失败' });
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -84,18 +99,59 @@ router.put('/:id', async (req, res) => {
 router.delete('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const [layer] = await query('SELECT * FROM layers WHERE id = ?', [id]);
     
-    if (!layer) {
-      return res.status(404).json({ error: '图层不存在' });
+    // 开启事务
+    const connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    try {
+      // 先删除关联的点和区域
+      await connection.query('DELETE FROM points WHERE layer_id = ?', [id]);
+      await connection.query('DELETE FROM regions WHERE layer_id = ?', [id]);
+      
+      // 删除图层
+      const [result] = await connection.query('DELETE FROM layers WHERE id = ?', [id]);
+      
+      if (result.affectedRows === 0) {
+        await connection.rollback();
+        connection.release();
+        return res.status(404).json({ error: 'Layer not found' });
+      }
+      
+      await connection.commit();
+      connection.release();
+      res.json({ message: 'Layer and associated data deleted successfully' });
+    } catch (err) {
+      await connection.rollback();
+      connection.release();
+      throw err;
     }
-    
-    await query('DELETE FROM layers WHERE id = ?', [id]);
-    res.json({ message: '图层删除成功' });
   } catch (error) {
-    console.error('删除图层失败:', error);
-    res.status(500).json({ error: '删除图层失败' });
+    res.status(500).json({ error: error.message });
   }
 });
 
-module.exports = router;
+// 切换图层可见性
+router.patch('/:id/toggle', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const query = `
+      UPDATE layers 
+      SET visible = NOT visible,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `;
+    
+    const result = await executeQuery(query, [id]);
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Layer not found' });
+    }
+    
+    res.json({ message: 'Layer visibility toggled successfully' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+export default router;

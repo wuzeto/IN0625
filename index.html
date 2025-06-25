@@ -1,21 +1,69 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
-<head>
+  <head>
     <meta charset="UTF-8" />
+    <link rel="icon" type="image/png" href="/favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>地理信息大数据可视化平台</title>
-    <!-- leaflet样式 -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
-    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.4.1/dist/MarkerCluster.css" />
-    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.4.1/dist/MarkerCluster.Default.css" />
-    <link rel="icon" href="/favicon.ico" />
-    <style>
-        html, body, #app { height: 100%; margin: 0; padding: 0;}
-    </style>
-</head>
-<body>
-<div id="app"></div>
-<!-- leaflet和echarts等库建议全部npm安装并在组件中import，只保留下面一行 -->
-<script type="module" src="/src/main.js"></script>
-</body>
+    <title>地理数据可视化系统</title>
+    <meta name="description" content="基于Vue3的地理数据可视化系统" />
+    <!-- Leaflet CSS -->
+    <link 
+      rel="stylesheet" 
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/KFQW0q+MJNVxw+0ss="
+      crossorigin=""
+    />
+    <!-- 预加载字体 -->
+    <link 
+      rel="preload" 
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap"
+      as="style"
+      onload="this.onload=null;this.rel='stylesheet'"
+    />
+  </head>
+  <body>
+    <div id="app"></div>
+    <!-- 加载提示 -->
+    <div id="loading">
+      <style>
+        #loading {
+          position: fixed;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          background: #f5f7fa;
+          z-index: 999;
+        }
+        .loading-spinner {
+          width: 50px;
+          height: 50px;
+          border: 3px solid #e4e7ed;
+          border-radius: 50%;
+          border-top-color: #409eff;
+          animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+          to { transform: rotate(360deg); }
+        }
+      </style>
+      <div class="loading-spinner"></div>
+    </div>
+    <!-- 脚本 -->
+    <script type="module" src="/src/main.js"></script>
+    <script>
+      // 移除加载提示
+      window.addEventListener('load', () => {
+        const loading = document.getElementById('loading');
+        if (loading) {
+          loading.style.opacity = '0';
+          loading.style.transition = 'opacity 0.3s';
+          setTimeout(() => loading.remove(), 300);
+        }
+      });
+    </script>
+  </body>
 </html>
