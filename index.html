@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>地理信息大数据可视化平台</title>
+    <!-- leaflet样式 -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.4.1/dist/MarkerCluster.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.4.1/dist/MarkerCluster.Default.css" />
+    <link rel="icon" href="/favicon.ico" />
+    <style>
+        html, body, #app { height: 100%; margin: 0; padding: 0;}
+    </style>
+</head>
+<body>
+<div id="app"></div>
+<!-- leaflet和echarts等库建议全部npm安装并在组件中import，只保留下面一行 -->
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>
